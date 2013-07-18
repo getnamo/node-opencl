@@ -1,3 +1,10 @@
+Temporary Installation Instructions
+-----------------------------------
+npm install https://api.github.com/repos/getnamo/node-opencl/tarball
+
+Original Readme
+---------------
+
 Introduction
 ============
 This is an implementation of Khronos [WebCL][WEBCL] specification using NodeJS.

@@ -192,7 +192,7 @@ JS_METHOD(Device::getInfo)
     }
 
     // get CL_DEVICE_MAX_WORK_ITEM_SIZES array param
-    size_t param_value[max_work_item_dimensions];
+    size_t param_value[3];
     ret=::clGetDeviceInfo(device->device_id, param_name, max_work_item_dimensions*sizeof(size_t), param_value, NULL);
     if (ret != CL_SUCCESS) {
       REQ_ERROR_THROW(CL_INVALID_PLATFORM);

@@ -2,6 +2,10 @@ Temporary Installation Instructions
 -----------------------------------
 npm install https://api.github.com/repos/getnamo/node-opencl/tarball
 
+
+
+
+
 Original Readme
 ---------------
 

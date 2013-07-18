@@ -1,6 +1,6 @@
 {
-  "name":"node-webcl",
-  "version":"0.6.0",
+  "name":"node-opencl",
+  "version":"0.1.0",
   "description":"A WebCL implementation for desktops with NodeJS",
   "main":"webcl.js",
   "author":"Mikael Bourges-Sevenier <msevenier@motorola.com>",
@@ -21,7 +21,7 @@
   "repositories":[
     {
       "type":"git",
-      "url":"https://github.com/Motorola-Mobility/node-webcl"
+      "url":"https://github.com/getnamo/node-opencl"
     }
   ],
   "directories":{

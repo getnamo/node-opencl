@@ -30,7 +30,7 @@
 #            'OPENCL_SDK_LIB' : '<(OPENCL_SDK)\\lib\\x86_64',
 
           # Intel OpenCL SDK
-            'OPENCL_SDK' : 'C:\\Program Files (x86)\\Intel\\OpenCL SDK\\2.0',
+            'OPENCL_SDK' : 'C:\\Program Files (x86)\\Intel\\OpenCL SDK\\3.0',
             'OPENCL_SDK_INCLUDE' : '<(OPENCL_SDK)\\include',
             'OPENCL_SDK_LIB' : '<(OPENCL_SDK)\\lib\\x64',
           },

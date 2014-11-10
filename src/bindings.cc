@@ -35,6 +35,7 @@
 #include "platform.h"
 #include "program.h"
 #include "sampler.h"
+#include "exceptions.h"
 
 #include <cstdlib>
 
@@ -43,7 +44,7 @@ using namespace v8;
 #define JS_CL_CONSTANT(name) target->Set(JS_STR( #name ), JS_INT(CL_ ## name))
 
 #define NODE_DEFINE_CONSTANT_VALUE(target, name, value)                   \
-  (target)->Set(v8::String::NewSymbol(name),                         \
+  (target)->Set(NanSymbol(name),                         \
                 v8::Integer::New(value),                               \
                 static_cast<v8::PropertyAttribute>(v8::ReadOnly|v8::DontDelete))
 
@@ -51,7 +52,7 @@ using namespace v8;
 extern "C" {
 void init(Handle<Object> target)
 {
-  atexit(webcl::AtExit);
+  // node::AtExit(webcl::AtExit);
 
   /**
    * Platform-dependent byte sizes
@@ -73,13 +74,16 @@ void init(Handle<Object> target)
   webcl::Context::Init(target);
   webcl::Device::Init(target);
   webcl::Event::Init(target);
+  webcl::UserEvent::Init(target);
   webcl::Kernel::Init(target);
   webcl::MemoryObject::Init(target);
   webcl::WebCLBuffer::Init(target);
   webcl::WebCLImage::Init(target);
+  webcl::WebCLImageDescriptor::Init(target);
   webcl::Platform::Init(target);
   webcl::Program::Init(target);
   webcl::Sampler::Init(target);
+  webcl::WebCLException::Init(target);
 
   // OpenCL 1.1 constants
 
@@ -139,7 +143,7 @@ void init(Handle<Object> target)
   JS_CL_CONSTANT(INVALID_OPERATION);
   JS_CL_CONSTANT(INVALID_GL_OBJECT);
   JS_CL_CONSTANT(INVALID_BUFFER_SIZE);
-  JS_CL_CONSTANT(INVALID_MIP_LEVEL);
+  // JS_CL_CONSTANT(INVALID_MIP_LEVEL);
   JS_CL_CONSTANT(INVALID_GLOBAL_WORK_SIZE);
   JS_CL_CONSTANT(INVALID_PROPERTY);
 #ifdef CL_VERSION_1_2
@@ -235,7 +239,7 @@ void init(Handle<Object> target)
 #ifdef CL_VERSION_1_2
   JS_CL_CONSTANT(DEVICE_DOUBLE_FP_CONFIG);
 #endif
-  // reserved JS_CL_CONSTANT(DEVICE_HALF_FP_CONFIG);
+  JS_CL_CONSTANT(DEVICE_HALF_FP_CONFIG);
   JS_CL_CONSTANT(DEVICE_PREFERRED_VECTOR_WIDTH_HALF);
   JS_CL_CONSTANT(DEVICE_HOST_UNIFIED_MEMORY);
   JS_CL_CONSTANT(DEVICE_NATIVE_VECTOR_WIDTH_CHAR);
@@ -291,7 +295,7 @@ void init(Handle<Object> target)
   JS_CL_CONSTANT(QUEUE_PROFILING_ENABLE);
 
   /* cl_context_info  */
-  JS_CL_CONSTANT(CONTEXT_REFERENCE_COUNT);
+  // JS_CL_CONSTANT(CONTEXT_REFERENCE_COUNT);
   JS_CL_CONSTANT(CONTEXT_DEVICES);
   JS_CL_CONSTANT(CONTEXT_PROPERTIES);
   JS_CL_CONSTANT(CONTEXT_NUM_DEVICES);
@@ -321,14 +325,14 @@ void init(Handle<Object> target)
   /* cl_command_queue_info */
   JS_CL_CONSTANT(QUEUE_CONTEXT);
   JS_CL_CONSTANT(QUEUE_DEVICE);
-  JS_CL_CONSTANT(QUEUE_REFERENCE_COUNT);
+  // JS_CL_CONSTANT(QUEUE_REFERENCE_COUNT);
   JS_CL_CONSTANT(QUEUE_PROPERTIES);
 
   /* cl_mem_flags - bitfield */
   JS_CL_CONSTANT(MEM_READ_WRITE);
   JS_CL_CONSTANT(MEM_WRITE_ONLY);
   JS_CL_CONSTANT(MEM_READ_ONLY);
-  JS_CL_CONSTANT(MEM_USE_HOST_PTR);
+  JS_CL_CONSTANT(MEM_USE_HOST_PTR);    // TODO these 3 are not in WebCL 1.0???
   JS_CL_CONSTANT(MEM_ALLOC_HOST_PTR);
   JS_CL_CONSTANT(MEM_COPY_HOST_PTR);
 #ifdef CL_VERSION_1_2
@@ -390,9 +394,9 @@ void init(Handle<Object> target)
   JS_CL_CONSTANT(MEM_TYPE);
   JS_CL_CONSTANT(MEM_FLAGS);
   JS_CL_CONSTANT(MEM_SIZE);
-  JS_CL_CONSTANT(MEM_HOST_PTR);
-  JS_CL_CONSTANT(MEM_MAP_COUNT);
-  JS_CL_CONSTANT(MEM_REFERENCE_COUNT);
+  JS_CL_CONSTANT(MEM_HOST_PTR); 
+  // JS_CL_CONSTANT(MEM_MAP_COUNT);
+  // JS_CL_CONSTANT(MEM_REFERENCE_COUNT);
   JS_CL_CONSTANT(MEM_CONTEXT);
   JS_CL_CONSTANT(MEM_ASSOCIATED_MEMOBJECT);
   JS_CL_CONSTANT(MEM_OFFSET);
@@ -424,7 +428,7 @@ void init(Handle<Object> target)
   JS_CL_CONSTANT(FILTER_LINEAR);
 
   /* cl_sampler_info */
-  JS_CL_CONSTANT(SAMPLER_REFERENCE_COUNT);
+  // JS_CL_CONSTANT(SAMPLER_REFERENCE_COUNT);
   JS_CL_CONSTANT(SAMPLER_CONTEXT);
   JS_CL_CONSTANT(SAMPLER_NORMALIZED_COORDS);
   JS_CL_CONSTANT(SAMPLER_ADDRESSING_MODE);
@@ -438,7 +442,7 @@ void init(Handle<Object> target)
 #endif
 
   /* cl_program_info */
-  JS_CL_CONSTANT(PROGRAM_REFERENCE_COUNT);
+  // JS_CL_CONSTANT(PROGRAM_REFERENCE_COUNT);
   JS_CL_CONSTANT(PROGRAM_CONTEXT);
   JS_CL_CONSTANT(PROGRAM_NUM_DEVICES);
   JS_CL_CONSTANT(PROGRAM_DEVICES);
@@ -475,7 +479,7 @@ void init(Handle<Object> target)
   /* cl_kernel_info */
   JS_CL_CONSTANT(KERNEL_FUNCTION_NAME);
   JS_CL_CONSTANT(KERNEL_NUM_ARGS);
-  JS_CL_CONSTANT(KERNEL_REFERENCE_COUNT);
+  // JS_CL_CONSTANT(KERNEL_REFERENCE_COUNT);
   JS_CL_CONSTANT(KERNEL_CONTEXT);
   JS_CL_CONSTANT(KERNEL_PROGRAM);
 #ifdef CL_VERSION_1_2
@@ -522,7 +526,7 @@ void init(Handle<Object> target)
   /* cl_event_info  */
   JS_CL_CONSTANT(EVENT_COMMAND_QUEUE);
   JS_CL_CONSTANT(EVENT_COMMAND_TYPE);
-  JS_CL_CONSTANT(EVENT_REFERENCE_COUNT);
+  // JS_CL_CONSTANT(EVENT_REFERENCE_COUNT);
   JS_CL_CONSTANT(EVENT_COMMAND_EXECUTION_STATUS);
   JS_CL_CONSTANT(EVENT_CONTEXT);
 

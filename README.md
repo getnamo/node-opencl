@@ -35,8 +35,10 @@ See LICENSES in this distribution for all licenses used in samples from other co
 
 Dependencies
 ------------
+- [NAN][NAN] must be installed first to support all versions of v8
+
 - [node-webgl][NODE_WEBGL]. This module is used for samples using WebGL interoperability with WebCL.
-In turns, [node-webgl][NODE_WEBGL] relies on [node-glfw][NODE_GLFW] that relies on [GLFW][GLFW], [GLEW][GLEW], [AntTweakBar][ANTTWEAKBAR]. See node-webgl and node-glfw for instructions on how to install these modules.
+In turns, [node-webgl][NODE_WEBGL] relies on [node-glfw][NODE_GLFW] that relies on [GLFW][GLFW], [GLEW][GLEW], [AntTweakBar][ANTTWEAKBAR], and FreeImage. See node-webgl and node-glfw for instructions on how to install these modules.
 
 - OpenCL 1.1 must be installed on your machine. Typically, this means your machine has a not too old graphic card (maybe not more than 3 years old) and its latest graphic drivers installed.
 
@@ -55,19 +57,27 @@ if you need these binaries.
 
 Installation
 ------------
-Since OpenCL is a compute specification, rendering is not the main purpose but if you want to use graphic acceleration, you should first install node-glfw and then node-webgl and make sure some of node-webgl samples are working. See node-webgl for instructions.
+Make sure GLEW, GLFW, AntTweakBar, and FreeImage libraries are in your path.
 
-Note that installing the usual way: 
+- on Windows, put DLLs in Windows\System32. Put headers in <Visual Studio>\include and static librairies in <Visual Studio>\lib for 32-bit libraries (if you use node.js in 32-bit) or <Visual Studio>\lib\x64 (if you use 64-bit node.js).
+- on Mac, use homebrew
+
+	brew install freeimage anttweakbar glfw3 glew
+
+- on Linux use you package manager to install these libraries
+
+
+Now install the usual way: 
 
 	npm install node-webcl
 
-will also install node-webgl and node-glfw.
+this will also install [https://github.com/mikeseven/node-webgl](node-webgl), [https://github.com/mikeseven/node-glfw](node-glfw), [https://github.com/mikeseven/node-image](node-image), and [https://github.com/rvagg/nan](nan).
 
-If you want to use the latest code, simply do
+If you want to use the latest code, retrieve each repo (node-webcl, node-webgl, node-glfw, and node-image) from github and simply do
 
 	node-gyp rebuild
+	npm link
 	
-in node-webcl, node-webgl, and node-glfw.
 
 A crash course on WebCL
 =======================
@@ -134,3 +144,4 @@ OpenCL SDKs (use latest!)
 [GLFW]: http://www.glfw.org/ "GLFW"
 [ANTTWEAKBAR]: "http://www.antisphere.com/Wiki/tools:anttweakbar" "AntTweakBar"
 [GLEW]: http://glew.sourceforge.net/ "GLEW: The OpenGL Extension Wrangler Library"
+[NAN]: https://github.com/rvagg/nan "Native Abstractions for Node.js"

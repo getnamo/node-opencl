@@ -30,6 +30,8 @@ if(nodejs) {
   log = console.log;
   exit = process.exit;
 }
+else
+  WebCL = window.webcl;
 
 function read_complete(status, data) {
   log('in read_complete, status: '+status);
@@ -48,9 +50,9 @@ function main() {
   var /* WebCLBuffer */       data_buffer;
   var /* ArrayBuffer */       mapped_memory;
   
-  var NUM_BYTES = 131072; // 128 kB
-  var NUM_ITERATIONS = 5000;
-  var PROFILE_READ = false; // profile read vs. map buffer
+  var NUM_BYTES = 128*1024; // 128 KB
+  var NUM_ITERATIONS = 2000;
+  var PROFILE_READ = true; // profile read vs. map buffer
   
   /* Initialize data */
   var data=new Uint8Array(NUM_BYTES);
@@ -58,21 +60,17 @@ function main() {
   /* Create a device and context */
   log('creating context');
   
-  //Pick platform
-  var platformList=WebCL.getPlatforms();
-  platform=platformList[0];
-  log('using platform: '+platform.getInfo(WebCL.PLATFORM_NAME));
-  
-  //Query the set of devices on this platform
-  var devices = platform.getDevices(WebCL.DEVICE_TYPE_DEFAULT);
-  device=devices[0];
-  log('using device: '+device.getInfo(WebCL.DEVICE_NAME));
+  var context=null;
+  try {
+    context=WebCL.createContext(WebCL.DEVICE_TYPE_GPU);
+  }
+  catch(ex) {
+    throw new Error("Can't create CL context. "+ex);
+  }
 
-  // create GPU context for this platform
-  var context=WebCL.createContext({
-    devices: device, 
-    platform: platform
-  });
+  var devices=context.getInfo(WebCL.CONTEXT_DEVICES);
+  log("Found "+devices.length+" devices");
+  var device=devices[0];
 
   /* Build the program and create a kernel */
   var source = [
@@ -126,7 +124,8 @@ function main() {
 
   /* Tell kernel number of char16 vectors */
   var num_vectors = NUM_BYTES/16;
-  kernel.setArg(1, num_vectors, WebCL.type.INT);
+
+  kernel.setArg(1, new Int32Array([num_vectors]));
 
   /* Create a command queue */
   try {
@@ -136,10 +135,10 @@ function main() {
   }
 
   var total_time = 0, time_start, time_end;
-  var prof_event=new WebCL.WebCLEvent();
   var loop_time=0, loop_start, loop_end;
 
   for(var i=0;i<NUM_ITERATIONS;i++) {
+    var prof_event=new WebCL.WebCLEvent();
     loop_start=new Date().getTime();
 
     /* Enqueue kernel */
@@ -190,6 +189,7 @@ function main() {
 
     loop_end=new Date().getTime();
     loop_time += loop_end - loop_start;
+    prof_event.release();
   }
 
   log("Total "+(PROFILE_READ ? "read" : "map")+" time: "+total_time+" ns = " +(total_time/1000000.0)+" ms");

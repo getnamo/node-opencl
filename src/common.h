@@ -29,8 +29,7 @@
 
 // Node includes
 #include <node.h>
-#include <node_object_wrap.h>
-#include <v8.h>
+#include "nan.h"
 #include <string>
 #ifdef LOGGING
 #include <iostream>
@@ -57,14 +56,24 @@ using namespace std;
     #include <OpenCL/opencl.h>
     #define CL_GL_CONTEXT_KHR 0x2008
     #define CL_EGL_DISPLAY_KHR 0x2009
+    #define CL_INVALID_GL_SHAREGROUP_REFERENCE_KHR CL_INVALID_GL_CONTEXT_APPLE
   #endif
+  #define HAS_clGetContextInfo
 #elif defined(_WIN32)
     #include <GL/gl.h>
     #include <CL/opencl.h>
+    #define strcasecmp _stricmp
 #else
     #include <GL/gl.h>
     #include <GL/glx.h>
     #include <CL/opencl.h>
+#endif
+
+#ifndef CL_CURRENT_DEVICE_FOR_GL_CONTEXT_KHR
+  #define CL_CURRENT_DEVICE_FOR_GL_CONTEXT_KHR 0x2006 
+#endif
+#ifndef CL_DEVICES_FOR_GL_CONTEXT_KHR
+  #define CL_DEVICES_FOR_GL_CONTEXT_KHR 0x2007 
 #endif
 
 namespace {
@@ -72,64 +81,47 @@ namespace {
 #define JS_INT(val) v8::Integer::New(val)
 #define JS_NUM(val) v8::Number::New(val)
 #define JS_BOOL(val) v8::Boolean::New(val)
-#define JS_METHOD(name) v8::Handle<v8::Value> name(const v8::Arguments& args)
-//#define JS_EXCEPTION(reason) v8::ThrowException(v8::Exception::Error(JS_STR(reason)))
 #define JS_RETHROW(tc) v8::Local<v8::Value>::New(tc.Exception());
 
 #define REQ_ARGS(N)                                                     \
   if (args.Length() < (N))                                              \
-    return ThrowException(Exception::TypeError(                         \
-                             String::New("Expected " #N " arguments")));
+    NanThrowTypeError("Expected " #N " arguments");
 
 #define REQ_STR_ARG(I, VAR)                                             \
   if (args.Length() <= (I) || !args[I]->IsString())                     \
-    return ThrowException(Exception::TypeError(                         \
-                  String::New("Argument " #I " must be a string"))); \
+    NanThrowTypeError("Argument " #I " must be a string");              \
   String::Utf8Value VAR(args[I]->ToString());
 
 #define REQ_EXT_ARG(I, VAR)                                             \
   if (args.Length() <= (I) || !args[I]->IsExternal())                   \
-    return ThrowException(Exception::TypeError(                         \
-                              String::New("Argument " #I " invalid"))); \
+    NanThrowTypeError("Argument " #I " invalid");                       \
   Local<External> VAR = Local<External>::Cast(args[I]);
 
 #define REQ_FUN_ARG(I, VAR)                                             \
   if (args.Length() <= (I) || !args[I]->IsFunction())                   \
-    return ThrowException(Exception::TypeError(                         \
-                  String::New("Argument " #I " must be a function")));  \
+    NanThrowTypeError("Argument " #I " must be a function");            \
   Local<Function> VAR = Local<Function>::Cast(args[I]);
 
-#define REQ_ERROR_THROW(error) if (ret == error) return ThrowException(Exception::Error(String::New(#error)));
+#define REQ_ERROR_THROW_NONE(error) if (ret == CL_##error) ThrowException(NanObjectWrapHandle(WebCLException::New(#error, ErrorDesc(CL_##error), CL_##error))); return;
+
+#define REQ_ERROR_THROW(error) if (ret == CL_##error) return ThrowException(NanObjectWrapHandle(WebCLException::New(#error, ErrorDesc(CL_##error), CL_##error)));
 
 #define DESTROY_WEBCL_OBJECT(obj)	\
   obj->Destructor();			\
   unregisterCLObj(obj);
   
-
-template <typename T>
-static T* UnwrapThis(const v8::Arguments& args) {
-  return node::ObjectWrap::Unwrap<T>(args.This());
-}
-
-#define ThrowError(msg) \
-    v8::ThrowException(v8::Exception::Error(v8::String::New(msg)))
-
-#define ThrowTypeError(msg) \
-    v8::ThrowException(v8::Exception::TypeError(v8::String::New(msg)))
-
-#define ThrowRangeError(msg) \
-    v8::ThrowException(v8::Exception::RangeError(v8::String::New(msg)))
-
-}
+} // namespace
 
 namespace webcl {
 
+const char* ErrorDesc(cl_int err);
+
 // generic baton for async callbacks
 struct Baton {
-    v8::Persistent<v8::Function> callback;
+    NanCallback *callback;
     int error;
-    uv_async_t async;
     char *error_msg;
+    uint8_t *priv_info;
 
     // Custom user data
     v8::Persistent<v8::Value> data;
@@ -137,28 +129,70 @@ struct Baton {
     // parent of this callback (WebCLEvent object)
     v8::Persistent<v8::Object> parent;
 
-    Baton() : error(CL_SUCCESS),error_msg(NULL)  {}
+    Baton() : callback(NULL), error(CL_SUCCESS), error_msg(NULL), priv_info(NULL)  {}
+    ~Baton() {
+      if(error_msg) delete error_msg;
+      if(priv_info) delete priv_info;
+    }
 };
 
 class WebCLObject;
 void registerCLObj(WebCLObject* obj);
 void unregisterCLObj(WebCLObject* obj);
-void AtExit();
+void AtExit(void* arg);
+
+namespace CLObjType {
+enum CLObjType {
+  None=0,
+  Platform,
+  Device,
+  Context,
+  CommandQueue,
+  Kernel,
+  Program,
+  Sampler,
+  Event,
+  MemoryObject,
+  Exception,
+};
+}
+
+WebCLObject* findCLObj(void* type);
 
 class WebCLObject : public node::ObjectWrap {
 protected:
-  virtual ~WebCLObject() {
-    Destructor();
-    unregisterCLObj(this);
-  }
+  WebCLObject() : _type(CLObjType::None) {}
+  // virtual ~WebCLObject() {
+  //   // printf("Destructor WebCLObject\n");
+  //   // Destructor();
+  //   // unregisterCLObj(this);
+  // }
 
+#define isA(value, type) ((int)value & (int)type)==(int)type
 public:
-  virtual void Destructor() {}
-  virtual bool isKernel() const { return false; }
-  virtual bool isCommandQueue() const { return false; }
-  virtual bool isEvent() const { return false; }
+  virtual void Destructor() { 
+#ifdef LOGGING
+    printf("In WebCLObject::Destructor\n"); 
+#endif
+  }
+  CLObjType::CLObjType getType() { return _type; }
+  bool isPlatform() const { return isA(_type, CLObjType::Platform); }
+  bool isDevice() const { return isA(_type, CLObjType::Device); }
+  bool isKernel() const { return isA(_type, CLObjType::Kernel); }
+  bool isCommandQueue() const { return isA(_type, CLObjType::CommandQueue); }
+  bool isMemoryObject() const { return isA(_type, CLObjType::MemoryObject); }
+  bool isProgram() const { return isA(_type, CLObjType::Program); }
+  bool isSampler() const { return isA(_type, CLObjType::Sampler); }
+  bool isEvent() const { return isA(_type, CLObjType::Event); }
+  bool isContext() const { return isA(_type, CLObjType::Context); }
+  virtual bool isEqual(void *clObj) { return false; }
+
+protected:
+  CLObjType::CLObjType _type;
 };
 
-}
+} // namespace webcl
+
+#include "exceptions.h"
 
 #endif

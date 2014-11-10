@@ -38,6 +38,8 @@ if(nodejs) {
   //Read and eval library for mat/vec operations
   eval(fs.readFileSync(__dirname + '/glMatrix-0.9.5.min.js', 'utf8'));
 }
+else
+  WebCL = window.webcl;
 
 requestAnimationFrame = document.requestAnimationFrame;
 
@@ -45,7 +47,7 @@ requestAnimationFrame = document.requestAnimationFrame;
 if (WebCL == undefined) {
   alert("Unfortunately your system does not support WebCL. "
       + "Make sure that you have the WebCL extension installed.");
-  return;
+  process.exit(-1);
 }
 
 //Rendering window vars
@@ -96,7 +98,6 @@ document.on("mouseup", function(evt) {
 document.on("mousemove", motion);
 document.on("resize",function(evt){
   console.log('resize to: ('+evt.width+", "+evt.height+")");
-  document.createWindow(evt.width,evt.height);
   gl.viewportWidth=evt.width;
   gl.viewportHeight=evt.height;
   gl.viewport(0, 0, gl.viewportWidth, gl.viewportHeight);
@@ -110,26 +111,23 @@ function main() {
 
   // Pick platform
   var platformList = WebCL.getPlatforms();
-  cpPlatform = platformList[0];
+  var platform = platformList[0];
+  var devices = platform.getDevices(WebCL.DEVICE_TYPE_GPU);
+  device=devices[0];
 
-  // Query the set of GPU devices on this platform
-  cdDevices = cpPlatform.getDevices(WebCL.DEVICE_TYPE_DEFAULT);
-  log("  # of Devices Available = " + cdDevices.length);
-  var device = cdDevices[0];
-  log("  Using Device 0: " + device.getInfo(WebCL.DEVICE_NAME));
+  // make sure we use a discrete GPU
+  for(var i=0;i<devices.length;i++) {
+    var vendor=devices[i].getInfo(WebCL.DEVICE_VENDOR);
+    // log('found vendor '+vendor+', is Intel? '+(vendor.indexOf('Intel')>=0))
+    if(vendor.indexOf('Intel')==-1)
+      device=devices[i];
+  }
+  log('using device: '+device.getInfo(WebCL.DEVICE_VENDOR).trim()+' '+device.getInfo(WebCL.DEVICE_NAME));
 
-  // get CL-GL extension
-  var extensions = device.getInfo(WebCL.DEVICE_EXTENSIONS);
-  var hasGLSupport = extensions.search(/gl.sharing/i) >= 0;
-  log(hasGLSupport ? "GL-CL extension available ;-)" : "No GL support");
-  if (!hasGLSupport)
-    return;
+  if(!device.enableExtension('KHR_gl_sharing'))
+    throw new Error("Can NOT use GL sharing");
 
-  // create the OpenCL context
-  cxGPUContext = WebCL.createContext({
-    devices: device, 
-    shareGroup: gl, 
-    platform: cpPlatform });
+  cxGPUContext = WebCL.createContext(gl, device);
 
   // create a command-queue
   cqCommandQueue = cxGPUContext.createCommandQueue(device, 0);
@@ -144,10 +142,8 @@ function main() {
   } catch (err) {
     log('Error building program: ' + err);
   }
-  log("Build Status: "
-      + cpProgram.getBuildInfo(device, WebCL.PROGRAM_BUILD_STATUS));
-  log("Build Options: "
-      + cpProgram.getBuildInfo(device, WebCL.PROGRAM_BUILD_OPTIONS));
+  log("Build Status: " + cpProgram.getBuildInfo(device, WebCL.PROGRAM_BUILD_STATUS));
+  log("Build Options: " + cpProgram.getBuildInfo(device, WebCL.PROGRAM_BUILD_OPTIONS));
   log("Build Log: " + cpProgram.getBuildInfo(device, WebCL.PROGRAM_BUILD_LOG));
 
   // create the kernel
@@ -163,8 +159,16 @@ function main() {
 
   // set the args values
   ckKernel.setArg(0, vbo_cl);
-  ckKernel.setArg(1, mesh_width, WebCL.type.UINT);
-  ckKernel.setArg(2, mesh_height, WebCL.type.UINT);
+
+  // way 1
+  // ckKernel.setArg(1, new Int32Array([mesh_width]));
+  // ckKernel.setArg(2, new Int32Array([mesh_height]));
+
+  // way 2
+  var aints=new Int32Array([mesh_width,mesh_height]);
+  var aints2=aints.subarray(1);
+  ckKernel.setArg(1, aints);
+  ckKernel.setArg(2, aints.subarray(1));
 
   // run OpenCL kernel once to generate vertex positions
   runKernel(0);
@@ -266,7 +270,7 @@ function initGL() {
   gl.disable(gl.DEPTH_TEST);
 
   // viewport
-  gl.viewport(0, 0, window_width, window_height);
+  gl.viewport(0, 0, canvas.width, canvas.height);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
   // projection
@@ -285,8 +289,8 @@ function runKernel(time) {
   cqCommandQueue.enqueueAcquireGLObjects(vbo_cl);
 
   // Set arg 3 and execute the kernel
-  ckKernel.setArg(3, time, WebCL.type.FLOAT);
-  cqCommandQueue.enqueueNDRangeKernel(ckKernel, null, szGlobalWorkSize, null);
+  ckKernel.setArg(3, new Float32Array([time]));
+  cqCommandQueue.enqueueNDRangeKernel(ckKernel, 2, null, szGlobalWorkSize, null);
 
   // unmap buffer object
   cqCommandQueue.enqueueReleaseGLObjects(vbo_cl);

@@ -37,6 +37,8 @@ if(nodejs) {
   ATB=document.AntTweakBar;
   Image = WebGL.Image;
 }
+else
+  WebCL = window.webcl;
 
 requestAnimationFrame = document.requestAnimationFrame;
 var use_gpu=true;
@@ -46,8 +48,8 @@ main();
 function CLGL() {
   var COMPUTE_KERNEL_FILENAME         = "qjulia_kernel.cl";
   var COMPUTE_KERNEL_METHOD_NAME      = "QJuliaKernel";
-  var WIDTH                           = 800;
-  var HEIGHT                          = 800;
+  var WIDTH                           = 512;
+  var HEIGHT                          = 512;
     
   var /* cl_context */                       ComputeContext;
   var /* cl_command_queue */                 ComputeCommands;
@@ -90,7 +92,8 @@ function CLGL() {
   var ActiveTextureUnit;
   var HostImageBuffer             = 0;
   var twBar;
-  
+  var canvas;
+
   var VertexPos = [ 
      -1, -1,
       1, -1,
@@ -106,7 +109,7 @@ function CLGL() {
     initialize: function(device_type) {
       log('Initializing');
       document.setTitle("fbo");
-      var canvas = document.createElement("fbo-canvas", Width, Height);
+      canvas = document.createElement("fbo-canvas", Width, Height);
       
       // install UX callbacks
       document.addEventListener('resize', this.reshape);
@@ -307,7 +310,7 @@ function CLGL() {
 
       gl.disable(gl.DEPTH_TEST);
       gl.activeTexture(gl.TEXTURE0);
-      gl.viewport(0, 0, Width, Height);
+      gl.viewport(0, 0, canvas.width,canvas.height);
       
       gl.activeTexture(gl.TEXTURE0);
       return WebCL.SUCCESS;
@@ -347,41 +350,32 @@ function CLGL() {
     setupComputeDevices:function(device_type) {
       log('setup compute devices');
       
-      //Pick platform
-      var platformList=WebCL.getPlatforms();
-      var platform=platformList[0];
+      // Pick platform
+      var platformList = WebCL.getPlatforms();
+      var platform = platformList[0];
+      var devices = platform.getDevices(ComputeDeviceType ? WebCL.DEVICE_TYPE_GPU : WebCL.DEVICE_TYPE_DEFAULT);
+      ComputeDeviceId=devices[0];
 
-      ComputeDeviceType = device_type ? WebCL.DEVICE_TYPE_GPU : WebCL.DEVICE_TYPE_CPU;
-      ComputeContext = WebCL.createContext({
-        deviceType: ComputeDeviceType,
-        platform: platform,
-        shareGroup: gl});
+      // make sure we use a discrete GPU
+      for(var i=0;i<devices.length;i++) {
+        var vendor=devices[i].getInfo(WebCL.DEVICE_VENDOR);
+        // log('found vendor '+vendor+', is Intel? '+(vendor.indexOf('Intel')>=0))
+        if(vendor.indexOf('Intel')==-1)
+          ComputeDeviceId=devices[i];
+      }
+      log('found '+devices.length+' devices, using device: '+ComputeDeviceId.getInfo(WebCL.DEVICE_NAME));
 
-      var device_ids = ComputeContext.getInfo(WebCL.CONTEXT_DEVICES);
-      if(!device_ids)
-      {
-          alert("Error: Failed to retrieve compute devices for context!");
-          return -1;
+      if(!ComputeDeviceId.enableExtension('KHR_gl_sharing'))
+        throw new Error("Can NOT use GL sharing");
+
+      // create the OpenCL context
+      try {
+        ComputeContext = WebCL.createContext(gl, ComputeDeviceId);
       }
-      
-      var device_found=false;
-      for(var i=0,l=device_ids.length;i<l;++i ) 
-      {
-        device_type=device_ids[i].getInfo(WebCL.DEVICE_TYPE);
-        if(device_type == ComputeDeviceType) 
-        {
-            ComputeDeviceId = device_ids[i];
-            device_found = true;
-            break;
-        } 
+      catch(err) {
+        throw "Error: Failed to create context! "+err;
       }
-      
-      if(!device_found)
-      {
-          alert("Error: Failed to locate compute device!");
-          return -1;
-      }
-          
+
       // Create a command queue
       //
       ComputeCommands = ComputeContext.createCommandQueue(ComputeDeviceId, 0);
@@ -497,9 +491,9 @@ function CLGL() {
     },
     shutdown: function()
     {
-        log("Shutting down...");
-        this.cleanup();
-        process.exit(0);
+      log("Shutting down...");
+      this.cleanup();
+      process.exit(0);
     },
     
 	/* Before calling AntTweakBar or any other library that could use programs,
@@ -508,17 +502,17 @@ function CLGL() {
 	 * wrong vertex attrib arrays being used by another program!
 	 */
 	drawATB: function() {
-  	  gl.disableVertexAttribArray(shaderProgram.vertexPositionAttribute);
-  	  gl.disableVertexAttribArray(shaderProgram.textureCoordAttribute);
-  	  gl.useProgram(null);
+	  gl.disableVertexAttribArray(shaderProgram.vertexPositionAttribute);
+	  gl.disableVertexAttribArray(shaderProgram.textureCoordAttribute);
+	  gl.useProgram(null);
 	  gl.bindBuffer(gl.ARRAY_BUFFER, null);
 	  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
 
 	  ATB.Draw();
 
 	  gl.useProgram(shaderProgram);
-      gl.enableVertexAttribArray(shaderProgram.vertexPositionAttribute);
-      gl.enableVertexAttribArray(shaderProgram.textureCoordAttribute);
+    gl.enableVertexAttribArray(shaderProgram.vertexPositionAttribute);
+    gl.enableVertexAttribArray(shaderProgram.textureCoordAttribute);
 	},
 
     // /////////////////////////////////////////////////////////////////////
@@ -534,16 +528,13 @@ function CLGL() {
    
       if(Reshaped) {
         Reshaped=false;
-        if(newWidth > 1.25 * Width || newHeight > 1.25 * Height ||
-            newWidth < Width/1.25 || newHeight < Height/1.25) {
-          this.cleanup();
-          Width=newWidth;
-          Height=newHeight;
-          if(this.initialize(ComputeDeviceType == WebCL.DEVICE_TYPE_GPU) != WebCL.SUCCESS)
-            this.shutdown();
-        }
-        gl.viewport(0, 0, newWidth, newHeight);
+        Width=newWidth;
+        Height=newHeight;
+        gl.viewport(0, 0, Width, Height);
         gl.clear(gl.COLOR_BUFFER_BIT);
+      
+        // make sure AntTweakBar is repositioned correctly and events correct
+        ATB.WindowSize(Width,Height);
       }
       
       if(Animated)
@@ -579,7 +570,7 @@ function CLGL() {
     {
       newWidth=evt.width;
       newHeight=evt.height;
-      //log("reshape to "+w+'x'+h);
+      log("reshape to "+newWidth+'x'+newHeight);
       Reshaped=true;
     },
 
@@ -661,7 +652,6 @@ function CLGL() {
 
         }
         Update = true;
-        //glutPostRedisplay();
     },
     interpolate: function( m, t, a, b )
     {
@@ -722,11 +712,12 @@ function CLGL() {
         if(Animated || Update)
         {
             Update = false;
+
             try {
               ComputeKernel.setArg(0, ComputeResult);
-              ComputeKernel.setArg(1, MuC, WebCL.type.FLOAT | WebCL.type.VEC4);
-              ComputeKernel.setArg(2, ColorC, WebCL.type.FLOAT | WebCL.type.VEC4);
-              ComputeKernel.setArg(3, Epsilon, WebCL.type.FLOAT);
+              ComputeKernel.setArg(1, new Float32Array(MuC));
+              ComputeKernel.setArg(2, new Float32Array(ColorC));
+              ComputeKernel.setArg(3, new Float32Array([Epsilon]));
             } catch (err) {
               alert("Failed to set kernel args! " + err);
               return -10;
@@ -738,7 +729,7 @@ function CLGL() {
                        clu.DivUp(TextureHeight, local[1]) * local[1] ];
         
         try {
-          ComputeCommands.enqueueNDRangeKernel(ComputeKernel, null, global, local);
+          ComputeCommands.enqueueNDRangeKernel(ComputeKernel, 2, null, global, local);
         }
         catch(err)
         {
@@ -761,6 +752,7 @@ function CLGL() {
         var region = [ TextureWidth, TextureHeight, 1];
         
         try {
+          // TODO this should be shared between CL and GL not copied as in Apple code
           ComputeCommands.enqueueCopyBufferToImage(ComputeResult, ComputeImage, 
                                          0, origin, region);
         }
@@ -787,7 +779,7 @@ function CLGL() {
     initAntTweakBar: function (canvas) {
       ATB.Init();
       ATB.Define(" GLOBAL help='Quaternion Julia using WebCL.' "); // Message added to the help bar.
-      ATB.WindowSize(Width,Height);
+      ATB.WindowSize(canvas.width,canvas.height);
 
       twBar=new ATB.NewBar("qjulia");
       twBar.AddVar("epsilon", ATB.TYPE_FLOAT, {

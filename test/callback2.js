@@ -30,6 +30,8 @@ if(nodejs) {
   log = console.log;
   exit = process.exit;
 }
+else
+  WebCL = window.webcl;
 
 /* CL objects */
 var /* WebCLPlatform */     platform;
@@ -45,7 +47,7 @@ var done=false;
 // kernel callback
 function kernel_complete(event, data) {
   var status=event.status;
-  log('in JS kernel_complete, status: '+status);
+  log('[JS CB] kernel_complete, status: '+status);
   if(status<0) 
     log('Error: '+status);
   log(data);
@@ -54,7 +56,7 @@ function kernel_complete(event, data) {
 // read buffer callback
 function read_complete(event, data) {
   var status=event.status;
-  log('in JS read_complete, status: '+status);
+  log('[JS CB] read_complete, status: '+status);
   if(status<0) 
     log('Error: '+status);
 
@@ -75,6 +77,7 @@ function read_complete(event, data) {
 }
 
 function program_built(err, data) {
+  log('[JS CB] program built');
   try {
     kernel = program.createKernel("callback");
   } catch(ex) {
@@ -149,14 +152,26 @@ function main() {
   
   //Query the set of devices on this platform
   var devices = platform.getDevices(WebCL.DEVICE_TYPE_GPU);
-  device=devices[0];
-  log('using device: '+device.getInfo(WebCL.DEVICE_NAME));
+
+  // make sure we use a discrete GPU (Intel embedded GPU don't support event correctly)
+  device=null;
+  for(var i=0;i<devices.length;i++) {
+    var vendor=devices[i].getInfo(WebCL.DEVICE_VENDOR).trim().toUpperCase();
+    if(vendor==='NVIDIA' || vendor==='AMD' || vendor.indexOf('ADVANCED MICRO DEVICES')>=0) {
+      device=devices[i];
+      break;
+    }
+  }
+  if(!device || i==devices.length) {
+    log("[ERROR] No suitable device found");
+    exit(-1);
+  }
+
+  log('using device: '+device.getInfo(WebCL.DEVICE_VENDOR).trim()+
+    ' '+device.getInfo(WebCL.DEVICE_NAME).trim());
 
   // create GPU context for this platform
-  context=WebCL.createContext({
-    devices: device, 
-    platform: platform
-  } ,'Error occured in context', function(err,data){
+  context=WebCL.createContext(device ,'Error occured in context', function(err,data){
     log(data+" : "+err);
   });
 
@@ -178,15 +193,17 @@ function main() {
 
   /* Build program */
   try {
-    program.build(devices, null, 'compil done', program_built);
+    program.build(device, null, 'compil done', program_built);
   } catch(ex) {
     /* Find size of log and print to std output */
-    var info=program.getBuildInfo(devices[0], WebCL.PROGRAM_BUILD_LOG);
+    var info=program.getBuildInfo(device, WebCL.PROGRAM_BUILD_LOG);
     log(info);
     exit(1);
   }
 
   log("main app thread END");
+
+  // sleeping the main thread to let events propagate
   function sleep() {
     if(!done) {
       log('sleeping 0.5s');

@@ -40,23 +40,30 @@ public:
   static void Init(v8::Handle<v8::Object> target);
 
   static Context *New(cl_context cw);
-  static JS_METHOD(New);
+  static Context *New(cl_context cw, v8::Handle<v8::Object> webgl_context);
+  static NAN_METHOD(New);
 
-  static JS_METHOD(getInfo);
-  static JS_METHOD(createProgram);
-  static JS_METHOD(createCommandQueue);
-  static JS_METHOD(createBuffer);
-  static JS_METHOD(createImage);
-  static JS_METHOD(createSampler);
-  static JS_METHOD(createUserEvent);
-  static JS_METHOD(getSupportedImageFormats);
-  static JS_METHOD(createFromGLBuffer);
-  static JS_METHOD(createFromGLTexture);
-  static JS_METHOD(createFromGLRenderbuffer);
-  // Patch
-  static JS_METHOD(release);
+  static NAN_METHOD(getInfo);
+  static NAN_METHOD(createProgram);
+  static NAN_METHOD(createCommandQueue);
+  static NAN_METHOD(createBuffer);
+  static NAN_METHOD(createImage);
+  static NAN_METHOD(createSampler);
+  static NAN_METHOD(createUserEvent);
+  static NAN_METHOD(getSupportedImageFormats);
+  static NAN_METHOD(createFromGLBuffer);
+  static NAN_METHOD(createFromGLTexture);
+  static NAN_METHOD(createFromGLRenderbuffer);
+  static NAN_METHOD(release);
+  static NAN_METHOD(releaseAll);
+
+#ifdef HAS_clGetContextInfo
+  static NAN_METHOD(getGLContextInfo);
+#endif
+  static NAN_METHOD(getGLContext);
 
   cl_context getContext() const { return context; };
+  virtual bool isEqual(void *clObj) { return ((cl_context)clObj)==context; }
 
 private:
   Context(v8::Handle<v8::Object> wrapper);
@@ -64,6 +71,7 @@ private:
   static v8::Persistent<v8::FunctionTemplate> constructor_template;
 
   cl_context context;
+  v8::Handle<v8::Object> webgl_context_;
 };
 
 } // namespace

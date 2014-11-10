@@ -30,9 +30,11 @@ if(nodejs) {
   log = console.log;
   exit = process.exit;
 }
+else
+  WebCL = window.webcl;
 
-function read_complete(status, data) {
-  log('in read_complete, status: '+status);
+function read_complete(event, data) {
+  log('in read_complete, status: '+event.status);
   log("New data: "+data[0]+', '+data[1]+', '+data[2]+', '+data[3]);
 }
 
@@ -50,26 +52,39 @@ function main() {
   /* Initialize data */
   var data=new Float32Array(4);
   for(i=0; i<4; i++)
-     data[i] = i * 1.0;
+     data[i] = i * 2.0;
 
   /* Create a device and context */
   log('creating context');
   
-  //Pick platform
-  var platformList=WebCL.getPlatforms();
-  platform=platformList[0];
-  log('using platform: '+platform.getInfo(WebCL.PLATFORM_NAME));
+  // //Pick platform
+  // var platformList=WebCL.getPlatforms();
+  // platform=platformList[0];
+  // log('using platform: '+platform.getInfo(WebCL.PLATFORM_NAME));
+ 
   
-  //Query the set of devices on this platform
-  var devices = platform.getDevices(WebCL.DEVICE_TYPE_GPU);
-  device=devices[0];
-  log('using device: '+device.getInfo(WebCL.DEVICE_NAME));
+  // //Query the set of devices on this platform
+  // var devices = platform.getDevices(WebCL.DEVICE_TYPE_GPU);
+  // device=devices[0];
+  // log('using device: '+device.getInfo(WebCL.DEVICE_NAME));
 
-  // create GPU context for this platform
-  var context=WebCL.createContext({
-    devices: device, 
-    platform: platform
-  });
+  // // create GPU context for this platform
+  // var context=WebCL.createContext({
+  //   devices: device, 
+  //   platform: platform
+  // });
+
+  var context=null;
+  try {
+    context=WebCL.createContext(WebCL.DEVICE_TYPE_ALL);
+  }
+  catch(ex) {
+    throw new Exception("Can't create CL context");
+  }
+
+  var devices=context.getInfo(WebCL.CONTEXT_DEVICES);
+  log("Found "+devices.length+" devices");
+  var device=devices[0];
 
   /* Build the program and create a kernel */
   var source = [
@@ -131,7 +146,7 @@ function main() {
   try {
     user_event = context.createUserEvent();
   } catch(ex) {
-     log("Couldn't enqueue the kernel");
+     log("Couldn't create UserEvent. "+ex);
      exit(1);   
   }
 
@@ -164,7 +179,7 @@ function main() {
   log("Old data: "+data[0]+', '+data[1]+', '+data[2]+', '+data[3]);
 
   /* Set user event to success */
-  user_event.setUserEventStatus(WebCL.SUCCESS);
+  user_event.setStatus(WebCL.SUCCESS);
   
   queue.finish();
   log('queue finished');

@@ -30,6 +30,8 @@ if(nodejs) {
   clu = require('../lib/clUtils');
   log=console.log;
 }
+else
+  WebCL = window.webcl;
 
 //First check if the WebCL extension is installed at all 
 if (WebCL == undefined) {
@@ -49,22 +51,23 @@ function VectorAdd() {
   for (var i = 0; i < BUFFER_SIZE; i++) {
     A[i] = i;
     B[i] = i * 2;
-    C[i] = 0;
+    C[i] = 10;
   }
 
-  //Pick platform
-  var platformList=WebCL.getPlatforms();
-  platform=platformList[0];
-
-  //Query the set of devices on this platform
-  devices = platform.getDevices(WebCL.DEVICE_TYPE_DEFAULT);
-  log('using device: '+devices[0].getInfo(WebCL.DEVICE_NAME));
-
   // create GPU context for this platform
-  context=WebCL.createContext({
-	  deviceType: WebCL.DEVICE_TYPE_DEFAULT, 
-	  platform: platform
-  });
+  var context=null;
+  try {
+    context=WebCL.createContext(WebCL.DEVICE_TYPE_GPU);
+  }
+  catch(ex) {
+    throw new Exception("Can't create CL context");
+  }
+
+  var devices=context.getInfo(WebCL.CONTEXT_DEVICES);
+  device=devices[0];
+
+  log('using device: '+device.getInfo(WebCL.DEVICE_VENDOR).trim()+
+    ' '+device.getInfo(WebCL.DEVICE_NAME));
 
   kernelSourceCode = [
 "__kernel void vadd(__global int *a, __global int *b, __global int *c, uint iNumElements) ",
@@ -81,83 +84,94 @@ function VectorAdd() {
   //Build program
   program.build(devices,"");
 
-  size=BUFFER_SIZE*Uint32Array.BYTES_PER_ELEMENT; // size in bytes
+  var size=BUFFER_SIZE*Uint32Array.BYTES_PER_ELEMENT; // size in bytes
   
   //Create kernel object
   try {
     kernel= program.createKernel("vadd");
   }
   catch(err) {
-    console.log(program.getBuildInfo(devices[0],WebCL.PROGRAM_BUILD_LOG));
+    console.log(program.getBuildInfo(device,WebCL.PROGRAM_BUILD_LOG));
   }
   
   //Create command queue
-  queue=context.createCommandQueue(devices[0], 0);
+  queue=context.createCommandQueue(device, 0);
 
   //Create buffer for A and copy host contents
-  aBuffer = context.createBuffer(WebCL.MEM_READ_ONLY, size);
-  map=queue.enqueueMapBuffer(aBuffer, WebCL.TRUE, WebCL.MAP_WRITE, 0, BUFFER_SIZE * Uint32Array.BYTES_PER_ELEMENT);
-  
-  // WARNING: this feature for typed arrays is only in nodejs 0.7.x
-  var buf=new Uint32Array(map);
-  for(var i=0;i<BUFFER_SIZE;i++) {
-    buf.set(i, A[i]);
-  }
-  queue.enqueueUnmapMemObject(aBuffer, map);
+  aBuffer = context.createBuffer(WebCL.MEM_READ_ONLY | WebCL.MEM_USE_HOST_PTR, size, A);
 
   //Create buffer for B and copy host contents
-  bBuffer = context.createBuffer(WebCL.MEM_READ_ONLY, size);
-  map=queue.enqueueMapBuffer(bBuffer, WebCL.TRUE, WebCL.MAP_WRITE, 0, BUFFER_SIZE * Uint32Array.BYTES_PER_ELEMENT);
-  buf=new Uint32Array(map);
-  for(var i=0;i<BUFFER_SIZE;i++) {
-    buf[i]=B[i];
-  }
-  queue.enqueueUnmapMemObject(bBuffer, map);
+  bBuffer = context.createBuffer(WebCL.MEM_READ_ONLY | WebCL.MEM_USE_HOST_PTR, size, B);
 
   //Create buffer for that uses the host ptr C
-  cBuffer = context.createBuffer(WebCL.MEM_READ_WRITE, size);
+  cBuffer = context.createBuffer(WebCL.MEM_WRITE_ONLY | WebCL.MEM_USE_HOST_PTR, size, C);
 
   //Set kernel args
   kernel.setArg(0, aBuffer);
   kernel.setArg(1, bBuffer);
   kernel.setArg(2, cBuffer);
-  kernel.setArg(3, BUFFER_SIZE, WebCL.type.UINT);
+  kernel.setArg(3, new Uint32Array([BUFFER_SIZE]));
 
   // Execute the OpenCL kernel on the list
-  var localWS = [5]; // process one list at a time
-  var globalWS = [clu.roundUp(localWS, BUFFER_SIZE)]; // process entire list
+  // var localWS = [5]; // process one list at a time
+  // var globalWS = [clu.roundUp(localWS, BUFFER_SIZE)]; // process entire list
+  var localWS=null;
+  var globalWS=[BUFFER_SIZE];
 
   log("Global work item size: " + globalWS);
   log("Local work item size: " + localWS);
 
   // Execute (enqueue) kernel
-  queue.enqueueNDRangeKernel(kernel,
+  queue.enqueueNDRangeKernel(kernel, 1,
       null,
       globalWS,
       localWS);
   
-  //printResults(A,B,C);
-
   log("using enqueueMapBuffer");
   // Map cBuffer to host pointer. This enforces a sync with 
   // the host backing space, remember we choose GPU device.
-  map=queue.enqueueMapBuffer(
+  var map=queue.enqueueMapBuffer(
       cBuffer,
       WebCL.TRUE, // block 
       WebCL.MAP_READ,
       0,
-      BUFFER_SIZE * Uint32Array.BYTES_PER_ELEMENT);
+      size);
 
-  buf=new Uint32Array(map);
-  for(var i=0;i<BUFFER_SIZE;i++) {
-    C[i]=buf[i];
+  var output;
+  output="after map C= ";
+  for (var i = 0; i < BUFFER_SIZE; i++) {
+    output += C[i] + ", ";
   }
+  log(output);
+
+  // we are now reading values as bytes, we need to cast it to the output type we want
+  output = "output = ";
+  for (var i = 0; i < size; i++) {
+    output += map[i] + ", ";
+  }
+  log(output);
 
   queue.enqueueUnmapMemObject(cBuffer, map);
   
-  queue.finish (); //Finish all the operations
+  output="after unmap C= ";
+  for (var i = 0; i < BUFFER_SIZE; i++) {
+    output += C[i] + ", ";
+  }
+  log(output);
+
+  queue.finish(); //Finish all the operations
 
   printResults(A,B,C);
+
+  // cleanup
+  // queue.release();
+  // kernel.release();
+  // program.release();
+  // aBuffer.release();
+  // bBuffer.release();
+  // cBuffer.release();
+  // context.release();
+  //WebCL.releaseAll();
 }
 
 function printResults(A,B,C) {

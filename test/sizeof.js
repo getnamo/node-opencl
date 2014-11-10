@@ -30,6 +30,8 @@ if(nodejs) {
   log = console.log;
   exit = process.exit;
 }
+else
+  WebCL = window.webcl;
 
 (function main() {
   /* CL objects */
@@ -51,21 +53,33 @@ if(nodejs) {
   /* Create a device and context */
   log('creating context');
   
-  //Pick platform
+  // //Pick platform
   var platformList=WebCL.getPlatforms();
   platform=platformList[0];
   log('using platform: '+platform.getInfo(WebCL.PLATFORM_NAME));
   
-  //Query the set of devices on this platform
-  var devices = platform.getDevices(WebCL.DEVICE_TYPE_DEFAULT);
-  device=devices[0];
-  log('using device: '+device.getInfo(WebCL.DEVICE_NAME));
+  // //Query the set of devices on this platform
+  // var devices = platform.getDevices(WebCL.DEVICE_TYPE_DEFAULT);
+  // device=devices[0];
+  // log('using device: '+device.getInfo(WebCL.DEVICE_NAME));
 
-  // create GPU context for this platform
-  var context=WebCL.createContext({
-    devices: device, 
-    platform: platform
-  });
+  // // create GPU context for this platform
+  // var context=WebCL.createContext({
+  //   devices: device, 
+  //   platform: platform
+  // });
+
+  var context=null;
+  try {
+    context=WebCL.createContext(WebCL.DEVICE_TYPE_GPU);
+  }
+  catch(ex) {
+    throw new Exception("Can't create CL context");
+  }
+
+  var devices=context.getInfo(WebCL.CONTEXT_DEVICES);
+  log("Found "+devices.length+" devices");
+  var device=devices[0];
 
   /* Build the program and create a kernel */
   var source = [
@@ -137,7 +151,7 @@ if(nodejs) {
                 'Ray','RayAligned'
                 ];
   
-  var itemGoldValue=[1,
+  var itemGoldValue=[4,
                 1,4,4,4,
                 2,4,8,8,
                 4,8,16,16,
@@ -190,7 +204,7 @@ if(nodejs) {
   /* Create kernel argument */
   try {
     kernel.setArg(0, data_buffer);
-    kernel.setArg(1, NUM_ELEMS, WebCL.type.UINT); /* Tell kernel number of elements */
+    kernel.setArg(1, new Int32Array([NUM_ELEMS])); /* Tell kernel number of elements */
     kernel.setArg(2, ret_buffer); /* Pass pointer to returned number of values */
 
   } catch(ex) {

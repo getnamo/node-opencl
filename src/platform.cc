@@ -30,6 +30,7 @@
 #include <cstring>
 
 using namespace v8;
+using namespace std;
 
 namespace webcl {
 
@@ -37,29 +38,33 @@ Persistent<FunctionTemplate> Platform::constructor_template;
 
 void Platform::Init(Handle<Object> target)
 {
-  HandleScope scope;
+  NanScope();
 
-  Local<FunctionTemplate> t = FunctionTemplate::New(Platform::New);
-  constructor_template = Persistent<FunctionTemplate>::New(t);
+  // constructor
+  Local<FunctionTemplate> ctor = FunctionTemplate::New(Platform::New);
+  NanAssignPersistent(FunctionTemplate, constructor_template, ctor);
+  ctor->InstanceTemplate()->SetInternalFieldCount(1);
+  ctor->SetClassName(NanSymbol("WebCLPlatform"));
 
-  constructor_template->InstanceTemplate()->SetInternalFieldCount(1);
-  constructor_template->SetClassName(String::NewSymbol("WebCLPlatform"));
+  // prototype
+  NODE_SET_PROTOTYPE_METHOD(ctor, "_getInfo", getInfo);
+  NODE_SET_PROTOTYPE_METHOD(ctor, "_getDevices", getDevices);
+  NODE_SET_PROTOTYPE_METHOD(ctor, "_getSupportedExtensions", getSupportedExtensions);
+  NODE_SET_PROTOTYPE_METHOD(ctor, "_enableExtension", enableExtension);
 
-  NODE_SET_PROTOTYPE_METHOD(constructor_template, "_getInfo", getInfo);
-  NODE_SET_PROTOTYPE_METHOD(constructor_template, "_getDevices", getDevices);
-
-  target->Set(String::NewSymbol("WebCLPlatform"), constructor_template->GetFunction());
+  target->Set(NanSymbol("WebCLPlatform"), ctor->GetFunction());
 }
 
-Platform::Platform(Handle<Object> wrapper) : platform_id(0)
+Platform::Platform(Handle<Object> wrapper) : platform_id(0), enableExtensions(NONE), availableExtensions(NONE)
 {
+  _type=CLObjType::Platform;
 }
 
-JS_METHOD(Platform::getDevices)
+NAN_METHOD(Platform::getDevices)
 {
-  HandleScope scope;
+  NanScope();
 
-  Platform *platform = UnwrapThis<Platform>(args);
+  Platform *platform = ObjectWrap::Unwrap<Platform>(args.This());
   cl_device_type type = args[0]->Uint32Value();
 
   cl_uint n = 0;
@@ -68,44 +73,50 @@ JS_METHOD(Platform::getDevices)
   cout<<"Found "<<n<<" devices"<<endl;
   #endif
   if (ret != CL_SUCCESS) {
-    REQ_ERROR_THROW(CL_INVALID_PLATFORM);
-    REQ_ERROR_THROW(CL_INVALID_DEVICE_TYPE);
-    REQ_ERROR_THROW(CL_INVALID_VALUE);
-    REQ_ERROR_THROW(CL_DEVICE_NOT_FOUND);
-    REQ_ERROR_THROW(CL_OUT_OF_RESOURCES);
-    REQ_ERROR_THROW(CL_OUT_OF_HOST_MEMORY);
-    return ThrowError("UNKNOWN ERROR");
+    REQ_ERROR_THROW(INVALID_PLATFORM);
+    REQ_ERROR_THROW(INVALID_DEVICE_TYPE);
+    REQ_ERROR_THROW(INVALID_VALUE);
+    REQ_ERROR_THROW(DEVICE_NOT_FOUND);
+    REQ_ERROR_THROW(OUT_OF_RESOURCES);
+    REQ_ERROR_THROW(OUT_OF_HOST_MEMORY);
+    return NanThrowError("UNKNOWN ERROR");
   }
 
   cl_device_id* ids = new cl_device_id[n];
   ret = ::clGetDeviceIDs(platform->platform_id, type, n, ids, NULL);
   if (ret != CL_SUCCESS) {
-    REQ_ERROR_THROW(CL_INVALID_PLATFORM);
-    REQ_ERROR_THROW(CL_INVALID_DEVICE_TYPE);
-    REQ_ERROR_THROW(CL_INVALID_VALUE);
-    REQ_ERROR_THROW(CL_DEVICE_NOT_FOUND);
-    REQ_ERROR_THROW(CL_OUT_OF_RESOURCES);
-    REQ_ERROR_THROW(CL_OUT_OF_HOST_MEMORY);
-    return ThrowError("UNKNOWN ERROR");
+    REQ_ERROR_THROW(INVALID_PLATFORM);
+    REQ_ERROR_THROW(INVALID_DEVICE_TYPE);
+    REQ_ERROR_THROW(INVALID_VALUE);
+    REQ_ERROR_THROW(DEVICE_NOT_FOUND);
+    REQ_ERROR_THROW(OUT_OF_RESOURCES);
+    REQ_ERROR_THROW(OUT_OF_HOST_MEMORY);
+    return NanThrowError("UNKNOWN ERROR");
   }
 
   Local<Array> deviceArray = Array::New(n);
   for (uint32_t i=0; i<n; i++) {
     #ifdef LOGGING
-    cout<<"Found device: "<<ids[i]<<endl;
+    char name[256];
+    ::clGetDeviceInfo(ids[i],CL_DEVICE_NAME,sizeof(name),name,NULL);
+    cout<<"Found device: "<<ids[i]<<" "<<name<<endl;
     #endif
-    deviceArray->Set(i, Device::New(ids[i])->handle_);
+    WebCLObject *obj=findCLObj((void*)ids[i]);
+    if(obj)
+      deviceArray->Set(i, NanObjectWrapHandle(obj));
+    else
+      deviceArray->Set(i, NanObjectWrapHandle(Device::New(ids[i])));
   }
 
   delete[] ids;
 
-  return scope.Close(deviceArray);
+  NanReturnValue(deviceArray);
 }
 
-JS_METHOD(Platform::getInfo)
+NAN_METHOD(Platform::getInfo)
 {
-  HandleScope scope;
-  Platform *platform = UnwrapThis<Platform>(args);
+  NanScope();
+  Platform *platform = ObjectWrap::Unwrap<Platform>(args.This());
   cl_platform_info param_name = args[0]->Uint32Value();
 
   char param_value[1024];
@@ -114,67 +125,94 @@ JS_METHOD(Platform::getInfo)
   cl_int ret=clGetPlatformInfo(platform->platform_id, param_name, 1024, param_value, &param_value_size_ret);
 
   if (ret != CL_SUCCESS) {
-    REQ_ERROR_THROW(CL_INVALID_PLATFORM);
-    REQ_ERROR_THROW(CL_INVALID_VALUE);
-    REQ_ERROR_THROW(CL_OUT_OF_HOST_MEMORY);
-    return ThrowError("UNKNOWN ERROR");
+    REQ_ERROR_THROW(INVALID_PLATFORM);
+    REQ_ERROR_THROW(INVALID_VALUE);
+    REQ_ERROR_THROW(OUT_OF_HOST_MEMORY);
+    return NanThrowError("UNKNOWN ERROR");
   }
 
   // NOTE: Adjust length because API returns NULL terminated string
-  return scope.Close(JS_STR(param_value,(int)param_value_size_ret - 1));
+  NanReturnValue(JS_STR(param_value,(int)param_value_size_ret - 1));
 }
 
-JS_METHOD(Platform::New)
+NAN_METHOD(Platform::getSupportedExtensions)
+{
+  NanScope();
+  Platform *platform = ObjectWrap::Unwrap<Platform>(args.This());
+  char param_value[1024];
+  size_t param_value_size_ret=0;
+
+  cl_int ret=clGetPlatformInfo(platform->platform_id, CL_PLATFORM_EXTENSIONS, 1024, param_value, &param_value_size_ret);
+  if (ret != CL_SUCCESS) {
+    REQ_ERROR_THROW(INVALID_PLATFORM);
+    REQ_ERROR_THROW(INVALID_VALUE);
+    REQ_ERROR_THROW(OUT_OF_HOST_MEMORY);
+    return NanThrowError("UNKNOWN ERROR");
+  }
+
+ NanReturnValue(JS_STR(param_value));
+}
+
+NAN_METHOD(Platform::enableExtension)
+{
+  NanScope();
+  Platform *platform = ObjectWrap::Unwrap<Platform>(args.This());
+  if(!args[0]->IsString())
+    return NanThrowTypeError("invalid extension name");
+
+  if(platform->availableExtensions==0x00) {
+    char param_value[1024];
+    size_t param_value_size_ret=0;
+
+    cl_int ret=clGetPlatformInfo(platform->platform_id, CL_PLATFORM_EXTENSIONS, 1024, param_value, &param_value_size_ret);
+    if (ret != CL_SUCCESS) {
+      REQ_ERROR_THROW(INVALID_PLATFORM);
+      REQ_ERROR_THROW(INVALID_VALUE);
+      REQ_ERROR_THROW(OUT_OF_HOST_MEMORY);
+      return NanThrowError("UNKNOWN ERROR");
+    }
+
+    if(!strcasecmp(param_value,"gl_sharing")) platform->availableExtensions |= GL_SHARING;
+    if(!strcasecmp(param_value,"fp16"))       platform->availableExtensions |= FP16;
+    if(!strcasecmp(param_value,"fp64"))       platform->availableExtensions |= FP64;
+  }
+
+  Local<String> name=args[0]->ToString();
+  String::AsciiValue astr(name);
+  bool ret=false;
+  if(!strcasecmp(*astr,"gl_sharing") && (platform->availableExtensions & GL_SHARING)) { platform->enableExtensions |= GL_SHARING; ret = true; }
+  else if(!strcasecmp(*astr,"fp16") && (platform->availableExtensions & FP16))        { platform->enableExtensions |= FP16; ret = true; }
+  else if(!strcasecmp(*astr,"fp64") && (platform->availableExtensions & FP64))        { platform->enableExtensions |= FP64; ret = true; }
+
+  NanReturnValue(JS_BOOL(ret));
+}
+
+NAN_METHOD(Platform::New)
 {
   if (!args.IsConstructCall())
-    return ThrowTypeError("Constructor cannot be called as a function.");
+    return NanThrowTypeError("Constructor cannot be called as a function.");
 
-  HandleScope scope;
+  NanScope();
   Platform *cl = new Platform(args.This());
   cl->Wrap(args.This());
-  return scope.Close(args.This());
+  registerCLObj(cl);
+  NanReturnValue(args.This());
 }
 
 Platform *Platform::New(cl_platform_id pid)
 {
 
-  HandleScope scope;
+  NanScope();
 
   Local<Value> arg = Integer::NewFromUnsigned(0);
-  Local<Object> obj = constructor_template->GetFunction()->NewInstance(1, &arg);
+  // Local<Object> obj = constructor_template->GetFunction()->NewInstance(1, &arg);
+  Local<FunctionTemplate> constructorHandle = NanPersistentToLocal(constructor_template);
+  Local<Object> obj = constructorHandle->GetFunction()->NewInstance(1, &arg);
 
   Platform *platform = ObjectWrap::Unwrap<Platform>(obj);
   platform->platform_id = pid;
 
   return platform;
-}
-
-JS_METHOD(Platform::getExtension) {
-  HandleScope scope;
-
-  Platform *platform = UnwrapThis<Platform>(args);
-  Local<String> vstr = args[0]->ToString();
-  String::AsciiValue astr(vstr);
-  char *str= *astr;
-  for(int i=0;i<astr.length();i++)
-    str[i]=tolower(str[i]);
-
-  char param_value[1024];
-  size_t param_value_size_ret=0;
-
-  cl_int ret=::clGetPlatformInfo(platform->platform_id, CL_PLATFORM_EXTENSIONS, 1024, param_value, &param_value_size_ret);
-  if (ret != CL_SUCCESS) {
-    REQ_ERROR_THROW(CL_INVALID_PLATFORM);
-    REQ_ERROR_THROW(CL_INVALID_VALUE);
-    REQ_ERROR_THROW(CL_OUT_OF_HOST_MEMORY);
-    return ThrowError("UNKNOWN ERROR");
-  }
-
-  char *p= ::strstr(param_value,str);
-  if(!p)
-    return ThrowError("UNKNOWN EXTENSION");
-
-  return Undefined();
 }
 
 } // namespace webcl

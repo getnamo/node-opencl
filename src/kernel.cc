@@ -42,25 +42,27 @@ Persistent<FunctionTemplate> Kernel::constructor_template;
 
 void Kernel::Init(Handle<Object> target)
 {
-  HandleScope scope;
+  NanScope();
 
-  Local<FunctionTemplate> t = FunctionTemplate::New(Kernel::New);
-  constructor_template = Persistent<FunctionTemplate>::New(t);
+  // constructor
+  Local<FunctionTemplate> ctor = FunctionTemplate::New(Kernel::New);
+  NanAssignPersistent(FunctionTemplate, constructor_template, ctor);
+  ctor->InstanceTemplate()->SetInternalFieldCount(1);
+  ctor->SetClassName(NanSymbol("WebCLKernel"));
 
-  constructor_template->InstanceTemplate()->SetInternalFieldCount(1);
-  constructor_template->SetClassName(String::NewSymbol("WebCLKernel"));
+  // prototype
+  NODE_SET_PROTOTYPE_METHOD(ctor, "_getInfo", getInfo);
+  NODE_SET_PROTOTYPE_METHOD(ctor, "_getArgInfo", getArgInfo);
+  NODE_SET_PROTOTYPE_METHOD(ctor, "_getWorkGroupInfo", getWorkGroupInfo);
+  NODE_SET_PROTOTYPE_METHOD(ctor, "_setArg", setArg);
+  NODE_SET_PROTOTYPE_METHOD(ctor, "_release", release);
 
-  NODE_SET_PROTOTYPE_METHOD(constructor_template, "_getInfo", getInfo);
-  NODE_SET_PROTOTYPE_METHOD(constructor_template, "_getWorkGroupInfo", getWorkGroupInfo);
-  NODE_SET_PROTOTYPE_METHOD(constructor_template, "_setArg", setArg);
-  // Patch
-  NODE_SET_PROTOTYPE_METHOD(constructor_template, "_release", release);
-
-  target->Set(String::NewSymbol("WebCLKernel"), constructor_template->GetFunction());
+  target->Set(NanSymbol("WebCLKernel"), ctor->GetFunction());
 }
 
 Kernel::Kernel(Handle<Object> wrapper) : kernel(0)
 {
+  _type=CLObjType::Kernel;
 }
 
 void Kernel::Destructor() {
@@ -71,82 +73,156 @@ void Kernel::Destructor() {
   kernel=0;
 }
 
-JS_METHOD(Kernel::release)
+NAN_METHOD(Kernel::release)
 {
-  HandleScope scope;
-  Kernel *kernel = UnwrapThis<Kernel>(args);
+  NanScope();
+  Kernel *kernel = ObjectWrap::Unwrap<Kernel>(args.This());
   
   DESTROY_WEBCL_OBJECT(kernel);
   
-  return Undefined();
+  NanReturnUndefined();
 }
 
-JS_METHOD(Kernel::getInfo)
+NAN_METHOD(Kernel::getInfo)
 {
-  HandleScope scope;
-  Kernel *kernel = UnwrapThis<Kernel>(args);
+  NanScope();
+  Kernel *kernel = ObjectWrap::Unwrap<Kernel>(args.This());
   cl_kernel_info param_name = args[0]->Uint32Value();
 
   switch (param_name) {
   case CL_KERNEL_FUNCTION_NAME: {
-    char param_value[1024];
     size_t param_value_size_ret=0;
-    cl_int ret=::clGetKernelInfo(kernel->getKernel(), param_name, sizeof(char)*1024, &param_value, &param_value_size_ret);
-    if (ret != CL_SUCCESS) {
-      REQ_ERROR_THROW(CL_INVALID_VALUE);
-      REQ_ERROR_THROW(CL_INVALID_KERNEL);
-      REQ_ERROR_THROW(CL_OUT_OF_RESOURCES);
-      REQ_ERROR_THROW(CL_OUT_OF_HOST_MEMORY);
-      return ThrowError("UNKNOWN ERROR");
+    cl_int ret=::clGetKernelInfo(kernel->getKernel(), param_name, 0, NULL, &param_value_size_ret);
+    if(ret==CL_SUCCESS && param_value_size_ret) {
+      char *param_value=new char[param_value_size_ret];
+      ret=::clGetKernelInfo(kernel->getKernel(), param_name, sizeof(char)*param_value_size_ret, param_value, NULL);
+      if (ret != CL_SUCCESS) {
+        REQ_ERROR_THROW(INVALID_VALUE);
+        REQ_ERROR_THROW(INVALID_KERNEL);
+        REQ_ERROR_THROW(OUT_OF_RESOURCES);
+        REQ_ERROR_THROW(OUT_OF_HOST_MEMORY);
+        return NanThrowError("UNKNOWN ERROR");
+      }
+      Local<String> str=JS_STR(param_value,(int)param_value_size_ret-1);
+      delete[] param_value;
+      NanReturnValue(str);
     }
-    return scope.Close(JS_STR(param_value,(int)param_value_size_ret));
+    NanReturnUndefined();
   }
   case CL_KERNEL_CONTEXT: {
     cl_context param_value=NULL;
     cl_int ret=::clGetKernelInfo(kernel->getKernel(), param_name, sizeof(cl_context), &param_value, NULL);
     if (ret != CL_SUCCESS) {
-      REQ_ERROR_THROW(CL_INVALID_VALUE);
-      REQ_ERROR_THROW(CL_INVALID_KERNEL);
-      REQ_ERROR_THROW(CL_OUT_OF_RESOURCES);
-      REQ_ERROR_THROW(CL_OUT_OF_HOST_MEMORY);
-      return ThrowError("UNKNOWN ERROR");
+      REQ_ERROR_THROW(INVALID_VALUE);
+      REQ_ERROR_THROW(INVALID_KERNEL);
+      REQ_ERROR_THROW(OUT_OF_RESOURCES);
+      REQ_ERROR_THROW(OUT_OF_HOST_MEMORY);
+      return NanThrowError("UNKNOWN ERROR");
     }
-    return scope.Close(Context::New(param_value)->handle_);
+    if(param_value) {
+      WebCLObject *obj=findCLObj((void*)param_value);
+      if(obj) {
+#ifdef LOGGING
+        printf("[Kernel::getInfo] returning context %p\n",obj);
+#endif
+        // ::clRetainContext(param_value);
+        NanReturnValue(NanObjectWrapHandle(obj));
+      }
+      else
+        NanReturnValue(NanObjectWrapHandle(Context::New(param_value)));
+    }
+    NanReturnUndefined();
   }
   case CL_KERNEL_PROGRAM: {
     cl_program param_value=NULL;
     cl_int ret=::clGetKernelInfo(kernel->getKernel(), param_name, sizeof(cl_program), &param_value, NULL);
     if (ret != CL_SUCCESS) {
-      REQ_ERROR_THROW(CL_INVALID_VALUE);
-      REQ_ERROR_THROW(CL_INVALID_KERNEL);
-      REQ_ERROR_THROW(CL_OUT_OF_RESOURCES);
-      REQ_ERROR_THROW(CL_OUT_OF_HOST_MEMORY);
-      return ThrowError("UNKNOWN ERROR");
+      REQ_ERROR_THROW(INVALID_VALUE);
+      REQ_ERROR_THROW(INVALID_KERNEL);
+      REQ_ERROR_THROW(OUT_OF_RESOURCES);
+      REQ_ERROR_THROW(OUT_OF_HOST_MEMORY);
+      return NanThrowError("UNKNOWN ERROR");
     }
-    return scope.Close(Program::New(param_value)->handle_);
+    if(param_value) {
+      WebCLObject *obj=findCLObj((void*)param_value);
+      if(obj) {
+#ifdef LOGGING
+        printf("[Kernel::getInfo] returning program %p\n",obj);
+#endif
+        // ::clRetainProgram(param_value);
+        NanReturnValue(NanObjectWrapHandle(obj));
+      }
+      else
+        NanReturnValue(NanObjectWrapHandle(Program::New(param_value)));
+    }
+    NanReturnUndefined();
   }
   case CL_KERNEL_NUM_ARGS:
   case CL_KERNEL_REFERENCE_COUNT: {
     cl_uint param_value=0;
     cl_int ret=::clGetKernelInfo(kernel->getKernel(), param_name, sizeof(cl_uint), &param_value, NULL);
     if (ret != CL_SUCCESS) {
-      REQ_ERROR_THROW(CL_INVALID_VALUE);
-      REQ_ERROR_THROW(CL_INVALID_KERNEL);
-      REQ_ERROR_THROW(CL_OUT_OF_RESOURCES);
-      REQ_ERROR_THROW(CL_OUT_OF_HOST_MEMORY);
-      return ThrowError("UNKNOWN ERROR");
+      REQ_ERROR_THROW(INVALID_VALUE);
+      REQ_ERROR_THROW(INVALID_KERNEL);
+      REQ_ERROR_THROW(OUT_OF_RESOURCES);
+      REQ_ERROR_THROW(OUT_OF_HOST_MEMORY);
+      return NanThrowError("UNKNOWN ERROR");
     }
-    return scope.Close(JS_INT(param_value));
+    NanReturnValue(JS_INT(param_value));
   }
   default:
-    return ThrowError("UNKNOWN param_name");
+    return NanThrowError("UNKNOWN param_name");
   }
 }
 
-JS_METHOD(Kernel::getWorkGroupInfo)
+NAN_METHOD(Kernel::getArgInfo)
 {
-  HandleScope scope;
-  Kernel *kernel = UnwrapThis<Kernel>(args);
+  NanScope();
+  Kernel *kernel = ObjectWrap::Unwrap<Kernel>(args.This());
+  int index = args[0]->Uint32Value();
+  char name[256], typeName[256];
+  int addressQualifier, accessQualifier, typeQualifier;
+
+  cl_int ret = ::clGetKernelArgInfo(kernel->getKernel(), index, 
+                                    CL_KERNEL_ARG_ADDRESS_QUALIFIER, 
+                                    sizeof(cl_kernel_arg_address_qualifier), &addressQualifier, NULL);
+
+  ret |= ::clGetKernelArgInfo(kernel->getKernel(), index, 
+                              CL_KERNEL_ARG_ACCESS_QUALIFIER, 
+                              sizeof(cl_kernel_arg_access_qualifier), &accessQualifier, NULL);
+  ret |= ::clGetKernelArgInfo(kernel->getKernel(), index, 
+                              CL_KERNEL_ARG_TYPE_QUALIFIER, 
+                              sizeof(cl_kernel_arg_type_qualifier), &typeQualifier, NULL);
+  ret |= ::clGetKernelArgInfo(kernel->getKernel(), index, 
+                              CL_KERNEL_ARG_TYPE_NAME, 
+                              sizeof(typeName), typeName, NULL);
+  ret |= ::clGetKernelArgInfo(kernel->getKernel(), index, 
+                              CL_KERNEL_ARG_NAME, 
+                              sizeof(name), name, NULL);
+
+  if(ret!=CL_SUCCESS) {
+    REQ_ERROR_THROW(INVALID_ARG_INDEX);
+    REQ_ERROR_THROW(INVALID_VALUE);
+    REQ_ERROR_THROW(KERNEL_ARG_INFO_NOT_AVAILABLE);
+    REQ_ERROR_THROW(INVALID_KERNEL);
+    return NanThrowError("Unknown Error");
+  }
+
+  // TODO create WebCLKernelArgInfo dictionary
+  Local<Object> kArgInfo = Object::New();
+  kArgInfo->Set(JS_STR("name"), JS_STR(name));
+  kArgInfo->Set(JS_STR("typeName"), JS_STR(typeName));
+  kArgInfo->Set(JS_STR("addressQualifier"), JS_INT(addressQualifier));
+  kArgInfo->Set(JS_STR("accessQualifier"), JS_INT(accessQualifier));
+  kArgInfo->Set(JS_STR("typeQualifier"), JS_INT(typeQualifier));
+
+  NanReturnValue(kArgInfo);
+}
+
+NAN_METHOD(Kernel::getWorkGroupInfo)
+{
+  NanScope();
+  Kernel *kernel = ObjectWrap::Unwrap<Kernel>(args.This());
   Device *device = ObjectWrap::Unwrap<Device>(args[0]->ToObject());
   cl_kernel_work_group_info param_name = args[1]->Uint32Value();
 
@@ -156,238 +232,202 @@ JS_METHOD(Kernel::getWorkGroupInfo)
     size_t param_value=0;
     cl_int ret=::clGetKernelWorkGroupInfo(kernel->getKernel(), device->getDevice(), param_name, sizeof(size_t), &param_value, NULL);
     if (ret != CL_SUCCESS) {
-      REQ_ERROR_THROW(CL_INVALID_DEVICE);
-      REQ_ERROR_THROW(CL_INVALID_VALUE);
-      REQ_ERROR_THROW(CL_INVALID_KERNEL);
-      REQ_ERROR_THROW(CL_OUT_OF_RESOURCES);
-      REQ_ERROR_THROW(CL_OUT_OF_HOST_MEMORY);
-      return ThrowError("UNKNOWN ERROR");
+      REQ_ERROR_THROW(INVALID_DEVICE);
+      REQ_ERROR_THROW(INVALID_VALUE);
+      REQ_ERROR_THROW(INVALID_KERNEL);
+      REQ_ERROR_THROW(OUT_OF_RESOURCES);
+      REQ_ERROR_THROW(OUT_OF_HOST_MEMORY);
+      return NanThrowError("UNKNOWN ERROR");
     }
-    return scope.Close(JS_INT((int32_t)param_value));
+    NanReturnValue(JS_INT((int32_t)param_value));
   }
   case CL_KERNEL_LOCAL_MEM_SIZE:
   case CL_KERNEL_PRIVATE_MEM_SIZE: {
     cl_ulong param_value=0;
     cl_int ret=::clGetKernelWorkGroupInfo(kernel->getKernel(), device->getDevice(), param_name, sizeof(cl_ulong), &param_value, NULL);
     if (ret != CL_SUCCESS) {
-      REQ_ERROR_THROW(CL_INVALID_DEVICE);
-      REQ_ERROR_THROW(CL_INVALID_VALUE);
-      REQ_ERROR_THROW(CL_INVALID_KERNEL);
-      REQ_ERROR_THROW(CL_OUT_OF_RESOURCES);
-      REQ_ERROR_THROW(CL_OUT_OF_HOST_MEMORY);
-      return ThrowError("UNKNOWN ERROR");
+      REQ_ERROR_THROW(INVALID_DEVICE);
+      REQ_ERROR_THROW(INVALID_VALUE);
+      REQ_ERROR_THROW(INVALID_KERNEL);
+      REQ_ERROR_THROW(OUT_OF_RESOURCES);
+      REQ_ERROR_THROW(OUT_OF_HOST_MEMORY);
+      return NanThrowError("UNKNOWN ERROR");
     }
-    return scope.Close(JS_NUM((double)param_value));
+    NanReturnValue(JS_NUM((double)param_value));
   }
   case CL_KERNEL_COMPILE_WORK_GROUP_SIZE: {
     ::size_t param_value[]={0,0,0};
     cl_int ret=::clGetKernelWorkGroupInfo(kernel->getKernel(), device->getDevice(), param_name, sizeof(size_t)*3, &param_value, NULL);
     if (ret != CL_SUCCESS) {
-      REQ_ERROR_THROW(CL_INVALID_DEVICE);
-      REQ_ERROR_THROW(CL_INVALID_VALUE);
-      REQ_ERROR_THROW(CL_INVALID_KERNEL);
-      REQ_ERROR_THROW(CL_OUT_OF_RESOURCES);
-      REQ_ERROR_THROW(CL_OUT_OF_HOST_MEMORY);
-      return ThrowError("UNKNOWN ERROR");
+      REQ_ERROR_THROW(INVALID_DEVICE);
+      REQ_ERROR_THROW(INVALID_VALUE);
+      REQ_ERROR_THROW(INVALID_KERNEL);
+      REQ_ERROR_THROW(OUT_OF_RESOURCES);
+      REQ_ERROR_THROW(OUT_OF_HOST_MEMORY);
+      return NanThrowError("UNKNOWN ERROR");
     }
 
     Local<Array> sizeArray = Array::New(3);
     for (int i=0; i<3; i++) {
       sizeArray->Set(i, JS_INT((int32_t)param_value[i]));
     }
-    return scope.Close(sizeArray);
+    NanReturnValue(sizeArray);
   }
   default:
-    return ThrowError("UNKNOWN param_name");
+    return NanThrowError("UNKNOWN param_name");
   }
 }
 
-// TODO: setArg is incomplete!!!!
-JS_METHOD(Kernel::setArg)
+// static const char* types[]={"char","uchar","short","ushort","int","uint","long","ulong","float","double","half"};
+
+struct TypeInfo {
+  const char *name; // type name
+  const size_t lname;  // type name's length (# of chars)
+  const size_t size;   // type size
+};
+static const TypeInfo types[]={
+  { "char", 4, 1 }, { "uchar", 5, 1 },
+  { "short", 5, 2 }, { "ushort", 6, 2 },
+  { "int", 3, 4 }, { "uint", 4, 4 },
+  { "long", 4, 4 }, { "ulong", 5, 4 },
+  { "float", 5, 4 }, { "double", 6, 8 }, 
+  { "half", 4, 2 },
+};
+static const int nTypes=sizeof(types)/sizeof(TypeInfo);
+
+NAN_METHOD(Kernel::setArg)
 {
-  HandleScope scope;
+  NanScope();
 
   if (!args[0]->IsUint32())
-    return ThrowError("CL_INVALID_ARG_INDEX");
+    return NanThrowError("INVALID_ARG_INDEX");
 
-  Kernel *kernel = UnwrapThis<Kernel>(args);
+  Kernel *kernel = ObjectWrap::Unwrap<Kernel>(args.This());
+  cl_kernel k = kernel->getKernel();
   cl_uint arg_index = args[0]->Uint32Value();
-  cl_int ret;
+  cl_int ret=CL_SUCCESS;
 
-  if(!args[1]->IsArray() && args[1]->IsObject()) {
-    String::AsciiValue str(args[1]->ToObject()->GetPrototype()->ToDetailString());
-    if(strcmp("WebCLSampler",*str)) {
+  if(args[1]->IsObject()) {
+    String::AsciiValue str(args[1]->ToObject()->GetConstructorName());
+    if(!strcmp("WebCLSampler",*str)) {
+      // WebCLSampler
+      Sampler *s = ObjectWrap::Unwrap<Sampler>(args[1]->ToObject());
+      cl_sampler sampler = s->getSampler();
+
+      if(sampler == 0) {
+        ret=CL_INVALID_SAMPLER;
+        REQ_ERROR_THROW(INVALID_SAMPLER); // bug in OSX that allows null sampler without throwing exception
+      }
+
+      ret = ::clSetKernelArg(k, arg_index, sizeof(cl_sampler), &sampler);
+    }
+    else if(!strcmp(*str, "WebCLBuffer") || !strcmp(*str, "WebCLImage")) {
+      // WebCLBuffer and WebCLImage
+      // printf("[SetArg] mem object\n");
       MemoryObject *mo = ObjectWrap::Unwrap<MemoryObject>(args[1]->ToObject());
       cl_mem mem = mo->getMemory();
-      ret = ::clSetKernelArg(kernel->getKernel(), arg_index, sizeof(cl_mem), &mem);
+      ret = ::clSetKernelArg(k, arg_index, sizeof(cl_mem), &mem);
     }
-    else {
-      cl_sampler sampler;
-      if (args[1]->IsUint32()) {
-        cl_uint ptr = args[1]->Uint32Value();
-        if (ptr)
-          return ThrowError("ARG is not of specified type");
-        sampler = 0;
-      } else {
-        Sampler *s = ObjectWrap::Unwrap<Sampler>(args[1]->ToObject());
-        sampler = s->getSampler();
-      }
-      ret = ::clSetKernelArg(kernel->getKernel(), arg_index, sizeof(cl_sampler), &sampler);
-    }
-  }
-  else {
-    cl_uint type = args[2]->Uint32Value();
-    cl_uint vec_type = type & 0xFFFF0000;
-    type &= 0xFFFF;
+    else if(!args[1]->IsArray()) {
+      Local<Object> obj=args[1]->ToObject();
+      String::AsciiValue name(obj->GetConstructorName());
+      char *host_ptr=NULL;
+      int len=0;
+      int bytes=0;
 
-    // TODO support for vectors
-    // TODO check types LOCAL
-    switch (type) {
-    case types::LOCAL_MEMORY_SIZE: {
-      ret = ::clSetKernelArg(kernel->getKernel(), arg_index, sizeof(float), NULL);
-      break;
-    }
-    case types::INT: {
-      if (!args[1]->IsInt32())
-        return ThrowError("ARG is not of specified type");
-      cl_int arg = args[1]->Int32Value();
-      ret = ::clSetKernelArg(kernel->getKernel(), arg_index, sizeof(cl_int), &arg);
-      break;
-    }
-    case types::UINT: {
-      if (!args[1]->IsUint32())
-        return ThrowError("ARG is not of specified type");
-      cl_uint arg = args[1]->Uint32Value();
-      ret = ::clSetKernelArg(kernel->getKernel(), arg_index, sizeof(cl_uint), &arg);
-      break;
-    }
-    case types::LONG: {
-      if (!args[1]->IsNumber())
-        return ThrowError("ARG is not of specified type");
-      cl_long arg = (cl_long)args[1]->NumberValue();
-      ret = ::clSetKernelArg(kernel->getKernel(), arg_index, sizeof(cl_long), &arg);
-      break;
-    }
-    case types::ULONG: {
-      if (!args[1]->IsNumber())
-        return ThrowError("ARG is not of specified type");
-      cl_ulong arg = (cl_ulong)args[1]->NumberValue();
-      ret = ::clSetKernelArg(kernel->getKernel(), arg_index, sizeof(cl_ulong), &arg);
-      break;
-    }
-    case types::FLOAT: {
-      if (vec_type & types::VEC4) {
-        float *arg = NULL;
-        if (args[1]->IsArray()) {
-          Local<Array> arr = Array::Cast(*args[1]);
-          if (arr->GetIndexedPropertiesExternalArrayDataLength() < 0) {
-            // pure JS array, no native backend
-            float _arg[4];
-            _arg[0] = (float) arr->Get(0)->NumberValue();
-            _arg[1] = (float) arr->Get(1)->NumberValue();
-            _arg[2] = (float) arr->Get(2)->NumberValue();
-            _arg[3] = (float) arr->Get(3)->NumberValue();
-            ret = ::clSetKernelArg(kernel->getKernel(), arg_index, sizeof(cl_float) * 4, _arg);
-          } else {
-            arg = (float*) arr->GetIndexedPropertiesExternalArrayData();
-            ret = ::clSetKernelArg(kernel->getKernel(), arg_index, sizeof(cl_float) * 4, arg);
-          }
-        } else if (args[1]->IsObject()) {
-          arg = (float*) args[1]->ToObject()->GetIndexedPropertiesExternalArrayData();
-          ret = ::clSetKernelArg(kernel->getKernel(), arg_index, sizeof(cl_float) * 4, arg);
-        }
-      } else if (!args[1]->IsNumber()) {
-        return ThrowError("ARG is not of specified type");
+      if(!strcmp("Buffer",*name)) {
+        host_ptr = node::Buffer::Data(obj);
+        bytes = node::Buffer::Length(obj);
       }
       else {
-        cl_float arg = (float) args[1]->NumberValue();
-        ret = ::clSetKernelArg(kernel->getKernel(), arg_index, sizeof(cl_float), &arg);
+        // ArrayBufferView
+        host_ptr= (char*) (obj->GetIndexedPropertiesExternalArrayData());
+        len=obj->GetIndexedPropertiesExternalArrayDataLength(); // number of elements
+        bytes=obj->Get(JS_STR("byteLength"))->Uint32Value();
+        // int byteOffset=obj->Get(JS_STR("byteOffset"))->Uint32Value();
       }
-      break;
-    }
-    case types::DOUBLE: {
-      if (!args[1]->IsNumber())
-        return ThrowError("ARG is not of specified type");
-      cl_double arg = (cl_double)args[1]->NumberValue();
-      ret = ::clSetKernelArg(kernel->getKernel(), arg_index, sizeof(cl_double), &arg);
-      break;
-    }
-    case types::HALF: { // TODO HALF may not be mapped correctly!
-      if (!args[1]->IsNumber())
-        return ThrowError("ARG is not of specified type");
-      cl_half arg = (cl_half) args[1]->NumberValue();
-      ret = ::clSetKernelArg(kernel->getKernel(), arg_index, sizeof(cl_half), &arg);
-      break;
-    }
-    case types::SHORT: {
-      if (!args[1]->IsNumber())
-        return ThrowError("ARG is not of specified type");
-      cl_short arg = (cl_short) args[1]->NumberValue();
-      ret = ::clSetKernelArg(kernel->getKernel(), arg_index, sizeof(cl_short), &arg);
-      break;
-    }
-    case types::USHORT: {
-      if (!args[1]->IsNumber())
-        return ThrowError("ARG is not of specified type");
-      cl_ushort arg = (cl_ushort) args[1]->NumberValue();
-      ret = ::clSetKernelArg(kernel->getKernel(), arg_index, sizeof(cl_ushort), &arg);
-      break;
-    }
-    case types::CHAR: {
-      if (!args[1]->IsNumber())
-        return ThrowError("ARG is not of specified type");
-      cl_char arg =(cl_char)  args[1]->NumberValue();
-      ret = ::clSetKernelArg(kernel->getKernel(), arg_index, sizeof(cl_char), &arg);
-      break;
-    }
-    case types::UCHAR: {
-      if (!args[1]->IsNumber())
-        return ThrowError("ARG is not of specified type");
-      cl_uchar arg = (cl_uchar) args[1]->NumberValue();
-      ret = ::clSetKernelArg(kernel->getKernel(), arg_index, sizeof(cl_uchar), &arg);
-      break;
-    }
-    default: {
-      return ThrowError("UNKNOWN TYPE");
-    }
+      // printf("TypedArray: len %d, bytes %d, byteOffset %d\n",len,bytes,byteOffset);
 
-    }
+      char typeName[16];
+      ret = ::clGetKernelArgInfo(k, arg_index, CL_KERNEL_ARG_TYPE_NAME, sizeof(typeName), typeName, NULL);
+
+      if(len>1) {
+        for(int i=0;i<nTypes;i++) {
+          if(strstr(typeName,types[i].name)==typeName) {
+            if(strlen(typeName) > types[i].lname) {
+              int vecSize = atoi(typeName + types[i].lname);
+              bytes*=vecSize;
+            }
+            if(len)
+              bytes/=len;
+
+            break;
+          }
+        }
+      }
+    
+      if(len == 1) {
+        // handle __local params
+        // printf("[setArg] index %d has 1 value\n",arg_index);
+        cl_kernel_arg_address_qualifier addr=0;
+        ret = ::clGetKernelArgInfo(k, arg_index, CL_KERNEL_ARG_ADDRESS_QUALIFIER, 
+                              sizeof(cl_kernel_arg_address_qualifier), &addr, NULL);
+        if(addr == CL_KERNEL_ARG_ADDRESS_LOCAL) {
+          // printf("  index %d size: %d\n",arg_index,*((cl_int*) host_ptr));          
+          ret = ::clSetKernelArg(k, arg_index, *((cl_int*) host_ptr), NULL);
+          // printf("[setArg __local] ret = %d\n",ret);
+        }
+        else {
+          ret = ::clSetKernelArg(k, arg_index, bytes, host_ptr);
+          // printf("ret1= %d\n",ret);
+        }
+      }
+      else {
+        ret = ::clSetKernelArg(k, arg_index, bytes, host_ptr);
+        // printf("ret2= %d\n",ret);
+      }
+   }
+    else 
+      return NanThrowTypeError("Invalid object for arg 1");
   }
-
+  else 
+    return NanThrowTypeError("Invalid object for arg 1");
+ 
   if (ret != CL_SUCCESS) {
-    REQ_ERROR_THROW(CL_INVALID_KERNEL);
-    REQ_ERROR_THROW(CL_INVALID_ARG_INDEX);
-    REQ_ERROR_THROW(CL_INVALID_ARG_VALUE);
-    REQ_ERROR_THROW(CL_INVALID_MEM_OBJECT);
-    REQ_ERROR_THROW(CL_INVALID_SAMPLER);
-    REQ_ERROR_THROW(CL_INVALID_ARG_SIZE);
-    REQ_ERROR_THROW(CL_OUT_OF_RESOURCES);
-    REQ_ERROR_THROW(CL_OUT_OF_HOST_MEMORY);
-    return ThrowError("UNKNOWN ERROR");
+    REQ_ERROR_THROW(INVALID_KERNEL);
+    REQ_ERROR_THROW(INVALID_ARG_INDEX);
+    REQ_ERROR_THROW(INVALID_ARG_VALUE);
+    REQ_ERROR_THROW(INVALID_MEM_OBJECT);
+    REQ_ERROR_THROW(INVALID_SAMPLER);
+    REQ_ERROR_THROW(INVALID_ARG_SIZE);
+    REQ_ERROR_THROW(OUT_OF_RESOURCES);
+    REQ_ERROR_THROW(OUT_OF_HOST_MEMORY);
+    return NanThrowError("UNKNOWN ERROR");
   }
 
-  return Undefined();
+  NanReturnUndefined();
 }
 
-JS_METHOD(Kernel::New)
+NAN_METHOD(Kernel::New)
 {
   if (!args.IsConstructCall())
-    return ThrowTypeError("Constructor cannot be called as a function.");
+    return NanThrowTypeError("Constructor cannot be called as a function.");
 
-  HandleScope scope;
+  NanScope();
   Kernel *k = new Kernel(args.This());
   k->Wrap(args.This());
   registerCLObj(k);
-  return scope.Close(args.This());
+  NanReturnValue(args.This());
 }
 
 Kernel *Kernel::New(cl_kernel kw)
 {
 
-  HandleScope scope;
+  NanScope();
 
   Local<Value> arg = Integer::NewFromUnsigned(0);
-  Local<Object> obj = constructor_template->GetFunction()->NewInstance(1, &arg);
+  Local<FunctionTemplate> constructorHandle = NanPersistentToLocal(constructor_template);
+  Local<Object> obj = constructorHandle->GetFunction()->NewInstance(1, &arg);
 
   Kernel *kernel = ObjectWrap::Unwrap<Kernel>(obj);
   kernel->kernel = kw;

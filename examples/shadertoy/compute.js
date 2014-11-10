@@ -36,40 +36,29 @@ function Compute() {
     // Pick platform
     var platformList = WebCL.getPlatforms();
     var platform = platformList[0];
+    var devices = platform.getDevices(clDeviceType ? WebCL.DEVICE_TYPE_GPU : WebCL.DEVICE_TYPE_DEFAULT);
+    clDevice=devices[0];
+
+    // make sure we use a discrete GPU
+    for(var i=0;i<devices.length;i++) {
+      var vendor=devices[i].getInfo(WebCL.DEVICE_VENDOR);
+      // log('found vendor '+vendor+', is Intel? '+(vendor.indexOf('Intel')>=0))
+      if(vendor.indexOf('Intel')==-1)
+        clDevice=devices[i];
+    }
+    log('found '+devices.length+' devices, using device: '+clDevice.getInfo(WebCL.DEVICE_NAME));
+
+    if(!clDevice.enableExtension('KHR_gl_sharing'))
+      throw new Error("Can NOT use GL sharing");
 
     // create the OpenCL context
     try {
-      clContext = WebCL.createContext({
-        deviceType: clDeviceType, 
-        shareGroup: gl, 
-        platform: platform });
+      clContext = WebCL.createContext(gl, clDevice);
     }
     catch(err) {
       throw "Error: Failed to create context! "+err;
     }
     
-    var device_ids = clContext.getInfo(WebCL.CONTEXT_DEVICES);
-    if (!device_ids) {
-      throw "Error: Failed to retrieve compute devices for context!";
-    }
-
-    // check we have the right device type
-    var device_found = false;
-    for(var i=0,l=device_ids.length;i<l;++i ) {
-      device_type = device_ids[i].getInfo(WebCL.DEVICE_TYPE);
-      if (device_type == clDeviceType) {
-        clDevice = device_ids[i];
-        device_found = true;
-        break;
-      }
-    }
-
-    if (!device_found) 
-      throw "Error: Failed to locate compute device!";
-
-    if (!clDevice.getInfo(WebCL.DEVICE_IMAGE_SUPPORT)) 
-      throw "Application requires images: Images not supported on this device.";
-
     // Create a command queue
     try {
       clQueue = clContext.createCommandQueue(clDevice, 0);
@@ -174,9 +163,9 @@ function Compute() {
     // set the kernel args
     try {
       clKernel.setArg(0, clTexture);
-      clKernel.setArg(1, time, WebCL.type.FLOAT);
+      clKernel.setArg(1, new Float32Array([time]));
     } catch (err) {
-      throw "Failed to set row kernel args! " + err;
+      throw "Failed to set kernel args! " + err;
     }
   }
 
@@ -197,6 +186,7 @@ function Compute() {
     var gl=gfx.gl();
     
     // Create OpenCL representation of OpenGL Texture
+    if(clTexture) clTexture.release();
     clTexture = null;
     try {
       clTexture = clContext.createFromGLTexture(WebCL.MEM_WRITE_ONLY,
@@ -219,18 +209,19 @@ function Compute() {
     clQueue.enqueueAcquireGLObjects(clTexture);
 
     // Set global and local work sizes for kernel
-    var local = [];
-    local[0] = warp_size;
-    local[1] = max_workgroup_size / local[0];
-    var global = [ clu.DivUp(TextureWidth, local[0]) * local[0],
-                   clu.DivUp(TextureHeight, local[1]) * local[1] ];
+    // doesn't work well on non-power-of-2 sizes on NVidia?
+    // var local = [];
+    // local[0] = warp_size;
+    // local[1] = max_workgroup_size / local[0];
+    // var global = [ clu.DivUp(TextureWidth, local[0]) * local[0],
+    //                clu.DivUp(TextureHeight, local[1]) * local[1] ];
 
     // default values
-    //var local = null;
-    //var global = [ TextureWidth, TextureHeight ];
+    var local = null;
+    var global = [ TextureWidth, TextureHeight ];
 
     try {
-      clQueue.enqueueNDRangeKernel(clKernel, null, global, local);
+      clQueue.enqueueNDRangeKernel(clKernel, 2, null, global, local);
     } catch (err) {
       throw "Failed to enqueue kernel! " + err;
     }
